@@ -1,0 +1,1075 @@
+openapi: 3.0.0
+info:
+  title: API Sistema Timbrature
+  version: 1.0.0
+  description: API per la gestione delle timbrature, turni, commesse e utenti
+
+paths:
+  /auth/login:
+    post:
+      summary: Login persistente (crea sessione lunga su dispositivo)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login riuscito
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: Credenziali errate
+        '423':
+          description: Account temporaneamente bloccato (rate limit)
+
+  /auth/refresh:
+    post:
+      summary: Rinnovo automatico token (rotation + device binding)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Nuova coppia token (refresh ruotato)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: Refresh token non valido o riutilizzato (session hijack)
+
+  /auth/logout:
+    post:
+      summary: Logout dal dispositivo corrente
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Sessione revocata
+
+  /auth/logout-all:
+    post:
+      summary: Logout globale (revoca tutte le sessioni dell'utente)
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Tutte le sessioni revocate
+
+  /auth/me:
+    get:
+      summary: Verifica sessione e ritorna profilo
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Utente autenticato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          description: Token scaduto o non valido
+        '403':
+          description: Utente disattivato o tokenVersion non valida
+
+  /timbrature:
+    post:
+      summary: Registra una nuova timbratura (IN/OUT, online o offline, anche via QR)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tipo
+                - commessaId
+                - deviceTimestamp
+              properties:
+                tipo:
+                  type: string
+                  enum: [IN, OUT]
+                commessaId:
+                  type: string
+                deviceTimestamp:
+                  type: string
+                  format: date-time
+                origine:
+                  type: string
+                  enum: [ONLINE, OFFLINE, QR]
+                qrToken:
+                  type: string
+                  description: Presente solo se origine = QR
+      responses:
+        '201':
+          description: Timbratura registrata (con eventuali correzioni/anomalie)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Timbratura'
+        '400':
+          description: Dati non validi
+        '401':
+          description: Non autenticato
+        '403':
+          description: Utente disattivato o senza permessi
+
+    get:
+      summary: Elenco timbrature con filtri
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: query
+          schema:
+            type: string
+        - name: commessaId
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: includeConflicts
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Lista timbrature
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Timbratura'
+
+  /timbrature/{id}:
+    patch:
+      summary: Modifica una timbratura (solo manager/admin, mai su se stessi se manager)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tipo:
+                  type: string
+                  enum: [IN, OUT]
+                commessaId:
+                  type: string
+                deviceTimestamp:
+                  type: string
+                  format: date-time
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Timbratura modificata con revisione creata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Timbratura'
+        '403':
+          description: Manager che tenta di modificare se stesso
+        '404':
+          description: Timbratura non trovata
+
+    delete:
+      summary: Annulla una timbratura (soft delete, audit obbligatorio)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Timbratura annullata (softDeleted=true)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Timbratura'
+
+  /timbrature/{id}/revisions:
+    get:
+      summary: Storico modifiche di una timbratura (solo admin/manager)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lista revisioni
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TimbraturaRevision'
+
+  /turni:
+    get:
+      summary: Restituisce i turni logici (accoppiamento IN-OUT) per utente/commessa/periodo
+      description: |
+        I turni sono derivati dalle timbrature.
+        Per default vengono esclusi quelli con validityStatus = CONFLICT.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: query
+          schema:
+            type: string
+          description: Filtra per dipendente
+        - name: commessaId
+          in: query
+          schema:
+            type: string
+          description: Filtra per commessa
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: includeConflicts
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Include anche turni con anomalie gravi
+      responses:
+        '200':
+          description: Lista dei turni derivati
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Turno'
+
+  /turni/summary:
+    get:
+      summary: Riepilogo ore lavorate per periodo, giorno, reparto
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: query
+          schema:
+            type: string
+        - name: commessaId
+          in: query
+          schema:
+            type: string
+        - name: reparto
+          in: query
+          schema:
+            type: string
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [DAY, USER, COMMESSA, REPARTO]
+            default: DAY
+        - name: includeConflicts
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Totali ore lavorate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalMinutes:
+                    type: integer
+                  totalHours:
+                    type: number
+                  breakdown:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key:
+                          type: string
+                          description: Giorno (YYYY-MM-DD) o Reparto o UserId o CommessaId
+                        minutes:
+                          type: integer
+                        hours:
+                          type: number
+
+  /turni/{turnoId}:
+    get:
+      summary: Dettaglio di un singolo turno logico
+      description: Usato dall'interfaccia manager per ispezionare e correggere un turno specifico
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: turnoId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dettaglio turno
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Turno'
+        '404':
+          description: Turno non trovato
+
+  /commesse:
+    post:
+      summary: Crea una nuova commessa (solo ADMIN)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nome]
+              properties:
+                nome:
+                  type: string
+                descrizione:
+                  type: string
+      responses:
+        '201':
+          description: Commessa creata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Commessa'
+        '403':
+          description: Solo ADMIN può creare commesse
+
+    get:
+      summary: Elenco commesse
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Lista commesse
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Commessa'
+
+  /commesse/{id}:
+    get:
+      summary: Dettaglio singola commessa
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Commessa
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Commessa'
+        '404':
+          description: Commessa non trovata
+
+    patch:
+      summary: Modifica dati commessa (solo ADMIN)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome:
+                  type: string
+                descrizione:
+                  type: string
+                attiva:
+                  type: boolean
+      responses:
+        '200':
+          description: Commessa aggiornata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Commessa'
+
+  /commesse/{id}/qr/regenerate:
+    post:
+      summary: Rigenera il QR della commessa (ADMIN o MANAGER, password globale)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QRRegenerationRequest'
+      responses:
+        '200':
+          description: QR rigenerato con successo
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  newCode:
+                    type: string
+                  revision:
+                    $ref: '#/components/schemas/QRCodeRevision'
+        '403':
+          description: Password errata o permessi insufficienti
+
+  /commesse/{id}/qr/history:
+    get:
+      summary: Storico rigenerazioni QR (solo ADMIN)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Storico QR della commessa
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QRCodeRevision'
+        '403':
+          description: Solo ADMIN può vedere lo storico completo
+
+  /users:
+    post:
+      summary: Crea un nuovo utente (solo ADMIN)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - codiceDipendente
+                - nome
+                - cognome
+                - email
+                - ruolo
+                - dataAssunzione
+              properties:
+                codiceDipendente:
+                  type: string
+                nome:
+                  type: string
+                cognome:
+                  type: string
+                email:
+                  type: string
+                ruolo:
+                  $ref: '#/components/schemas/Role'
+                reparto:
+                  type: string
+                qualifica:
+                  type: string
+                dataAssunzione:
+                  type: string
+                  format: date
+      responses:
+        '201':
+          description: Utente creato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          description: Solo ADMIN può creare utenti
+
+    get:
+      summary: Elenco utenti
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Lista utenti
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+
+  /users/{id}:
+    patch:
+      summary: Modifica dati anagrafici utente (solo ADMIN)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nome:
+                  type: string
+                cognome:
+                  type: string
+                email:
+                  type: string
+                reparto:
+                  type: string
+                qualifica:
+                  type: string
+                note:
+                  type: string
+      responses:
+        '200':
+          description: Utente aggiornato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /users/{id}/role:
+    patch:
+      summary: Cambia ruolo a un utente (solo ADMIN, mai su se stesso)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [newRole, reason]
+              properties:
+                newRole:
+                  $ref: '#/components/schemas/Role'
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Ruolo aggiornato e storico registrato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '403':
+          description: Non puoi cambiare il tuo ruolo
+
+  /users/{id}/deactivate:
+    post:
+      summary: Disattiva un utente (solo ADMIN)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Utente disattivato (non può più timbrare)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /users/{id}/role-history:
+    get:
+      summary: Storico cambi ruolo di un utente (solo ADMIN)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Storico ruoli
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RoleHistory'
+        '403':
+          description: Accesso consentito solo ad ADMIN
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    ValidityStatus:
+      type: string
+      enum:
+        - OK                # evento coerente
+        - AUTO_CORRECTED    # corretto automaticamente dal sistema
+        - CONFLICT          # conflitto temporale/logico
+        - OVERLAP           # sovrapposizione con altro turno
+        - MISSING_OUT       # IN senza OUT chiuso
+        - OFFLINE_INCONSISTENT # incoerenza dovuta a sync offline
+
+    AnomalyFlag:
+      type: string
+      enum:
+        - DOUBLE_IN
+        - ORPHAN_OUT
+        - FORCED_CLOSE
+        - OVERLAP
+        - FUTURE_TIME
+        - PRE_EMPLOYMENT
+        - OFFLINE_REORDERED
+        - ROLE_VIOLATION
+        - MANUAL_OVERRIDE
+
+    Timbratura:
+      type: object
+      required:
+        - id
+        - userId
+        - commessaId
+        - tipo
+        - deviceTimestamp
+        - serverTimestamp
+        - origine
+        - validityStatus
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        commessaId:
+          type: string
+        tipo:
+          type: string
+          enum: [IN, OUT]
+        deviceTimestamp:
+          type: string
+          format: date-time
+          description: Timestamp generato dal dispositivo
+        serverTimestamp:
+          type: string
+          format: date-time
+          description: Timestamp di ricezione sul server
+        origine:
+          type: string
+          enum: [ONLINE, OFFLINE, MANUALE, SISTEMA]
+        autoGenerated:
+          type: boolean
+          description: True se generata automaticamente (es. OUT forzato)
+        validityStatus:
+          $ref: '#/components/schemas/ValidityStatus'
+        anomalyFlags:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnomalyFlag'
+        needsReview:
+          type: boolean
+        createdBy:
+          type: string
+          description: userId o SYSTEM
+        softDeleted:
+          type: boolean
+          description: True se annullata (mai cancellata fisicamente)
+
+    TimbraturaRevision:
+      type: object
+      required:
+        - id
+        - timbraturaId
+        - modifiedBy
+        - modificationType
+        - timestamp
+      properties:
+        id:
+          type: string
+        timbraturaId:
+          type: string
+        oldValue:
+          type: object
+          description: Snapshot precedente
+        newValue:
+          type: object
+          description: Snapshot successivo
+        modifiedBy:
+          type: string
+          description: userId o SYSTEM
+        modificationType:
+          type: string
+          enum: [MANUAL, AUTO_CORRECTION]
+        ruleApplied:
+          type: string
+          description: Codice regola (es. R2_FORCED_CLOSE)
+        reason:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    Turno:
+      type: object
+      description: Vista derivata da coppie IN/OUT consecutive sulla stessa commessa
+      required:
+        - userId
+        - commessaId
+        - startTime
+        - endTime
+        - durationMinutes
+      properties:
+        userId:
+          type: string
+        commessaId:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        durationMinutes:
+          type: integer
+        validityStatus:
+          $ref: '#/components/schemas/ValidityStatus'
+        anomalyFlags:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnomalyFlag'
+        sourceTimbrature:
+          type: array
+          description: ID delle timbrature che compongono il turno
+          items:
+            type: string
+
+    Commessa:
+      type: object
+      required:
+        - id
+        - nome
+        - codiceQRAttivo
+        - attiva
+        - createdAt
+      properties:
+        id:
+          type: string
+        nome:
+          type: string
+        descrizione:
+          type: string
+        codiceQRAttivo:
+          type: string
+          description: Token attualmente valido per la timbratura (codificato nel QR)
+        attiva:
+          type: boolean
+          description: Se false, la commessa non accetta nuove timbrature
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+          description: UserId che ha creato la commessa
+
+    QRCodeRevision:
+      type: object
+      required:
+        - id
+        - commessaId
+        - oldCode
+        - newCode
+        - regeneratedBy
+        - regeneratedAt
+      properties:
+        id:
+          type: string
+        commessaId:
+          type: string
+        oldCode:
+          type: string
+          description: QR precedente (invalidato)
+        newCode:
+          type: string
+          description: Nuovo QR attivo
+        regeneratedBy:
+          type: string
+          description: UserId (ADMIN o MANAGER)
+        regeneratedAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          description: Motivo della rigenerazione (es. smarrimento fogli, cambio area, ecc.)
+        ipAddress:
+          type: string
+          description: IP del richiedente
+        success:
+          type: boolean
+          description: Esito dell'operazione (false se password errata)
+
+    QRRegenerationRequest:
+      type: object
+      required:
+        - password
+      properties:
+        password:
+          type: string
+          format: password
+          description: Password globale per rigenerazione QR (mai restituita dal server)
+
+    QRTokenPayload:
+      type: object
+      description: Contenuto logico del QR (prima della firma)
+      required:
+        - commessaId
+        - issuedAt
+      properties:
+        commessaId:
+          type: string
+        issuedAt:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          description: Numero di rigenerazione progressivo
+
+    Role:
+      type: string
+      enum:
+        - ADMIN
+        - MANAGER
+        - DIPENDENTE
+
+    User:
+      type: object
+      required:
+        - id
+        - codiceDipendente
+        - nome
+        - email
+        - ruolo
+        - attivo
+        - dataAssunzione
+        - createdAt
+      properties:
+        id:
+          type: string
+        codiceDipendente:
+          type: string
+          description: Matricola o codice interno aziendale univoco
+        nome:
+          type: string
+        cognome:
+          type: string
+        email:
+          type: string
+          format: email
+        ruolo:
+          $ref: '#/components/schemas/Role'
+        reparto:
+          type: string
+          description: Reparto aziendale di appartenenza
+        qualifica:
+          type: string
+          description: Qualifica o mansione (solo informativo)
+        attivo:
+          type: boolean
+          description: Se false, l'utente non può più timbrare né accedere
+        dataAssunzione:
+          type: string
+          format: date
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+          description: UserId dell'admin che ha creato l'account
+        lastLoginAt:
+          type: string
+          format: date-time
+        note:
+          type: string
+          description: Annotazioni interne (visibili solo ad admin/manager)
+
+    RoleHistory:
+      type: object
+      required:
+        - id
+        - userId
+        - oldRole
+        - newRole
+        - changedBy
+        - changedAt
+      properties:
+        id:
+          type: string
+        userId:
+          type: string
+        oldRole:
+          $ref: '#/components/schemas/Role'
+        newRole:
+          $ref: '#/components/schemas/Role'
+        changedBy:
+          type: string
+          description: UserId dell'ADMIN che ha effettuato il cambio
+        changedAt:
+          type: string
+          format: date-time
+        reason:
+          type: string
+          description: Motivo del cambio ruolo
+        ipAddress:
+          type: string
+          description: IP da cui è stato effettuato il cambio
+
+    LoginRequest:
+      type: object
+      required: [email, password, deviceId]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        deviceId:
+          type: string
+          description: ID univoco del dispositivo (persistente)
+
+    TokenPair:
+      type: object
+      required: [accessToken, refreshToken, expiresIn]
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: Secondi di validità dell'access token
+
+    RefreshRequest:
+      type: object
+      required: [refreshToken, deviceId]
+      properties:
+        refreshToken:
+          type: string
+        deviceId:
+          type: string
+
+    MeResponse:
+      type: object
+      required: [user]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        role:
+          $ref: '#/components/schemas/Role'
+        deviceId:
+          type: string
