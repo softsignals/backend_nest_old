@@ -75,6 +75,11 @@ npm run start:dev:gateway
 - `POST /api/v1/commesse/:id/qr/regenerate`
 - `GET /api/v1/commesse/:id/qr/history`
 
+## Testing API (Bruno)
+
+Per test manuali e **test bulk timbrature** con [Bruno](https://www.usebruno.com/): guida completa in **`docs/bruno-api-testing-guide.md`**.  
+Il file `bruno.json` in root definisce lo scenario di load test (`timbrature-burst`); dalla root: `bru run --env local`.
+
 ## Secrets
 
 Non committare secret o `.env.*` reali. Guida: `docs/secrets.md`.
