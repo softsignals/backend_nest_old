@@ -1,0 +1,65 @@
+# Production stack: single image, NEST_APP selects the app.
+# On deploy, replace IMAGE_PLACEHOLDER with actual image (e.g. ghcr.io/org/repo/backend-nest:latest).
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: timbrio-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - timbrio-net
+
+  auth-service:
+    image: IMAGE_PLACEHOLDER
+    container_name: timbrio-auth
+    restart: unless-stopped
+    environment:
+      NEST_APP: auth-service
+    env_file:
+      - .env.auth
+    ports:
+      - '3001:3001'
+    networks:
+      - timbrio-net
+
+  timbrature-service:
+    image: IMAGE_PLACEHOLDER
+    container_name: timbrio-timbrature
+    restart: unless-stopped
+    environment:
+      NEST_APP: timbrature-service
+    env_file:
+      - .env.timbrature
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - '3002:3002'
+    networks:
+      - timbrio-net
+
+  api-gateway-bff:
+    image: IMAGE_PLACEHOLDER
+    container_name: timbrio-gateway
+    restart: unless-stopped
+    environment:
+      NEST_APP: api-gateway-bff
+    env_file:
+      - .env.gateway
+    depends_on:
+      auth-service:
+        condition: service_started
+      timbrature-service:
+        condition: service_started
+    ports:
+      - '5000:3000'
+    networks:
+      - timbrio-net
+
+networks:
+  timbrio-net:
+    driver: bridge

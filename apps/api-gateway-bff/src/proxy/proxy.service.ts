@@ -4,6 +4,9 @@ import { JsonLoggerService } from '@app/common';
 import type { Request } from 'express';
 import { firstValueFrom } from 'rxjs';
 
+const UPSTREAM_TIMEOUT_MS = 8_000;
+const UPSTREAM_MAX_ATTEMPTS = 2;
+
 @Injectable()
 export class ProxyService {
   constructor(
@@ -35,46 +38,80 @@ export class ProxyService {
         request.headers['content-type'] ?? 'application/json';
     }
 
-    try {
-      const response = await firstValueFrom(
-        this.http.request({
-          url,
-          method: request.method,
-          ...(isGetOrHead ? {} : { data: requestBody }),
-          params,
-          headers,
-          validateStatus: () => true,
-        }),
-      );
+    let lastError: unknown = null;
 
-      if (response.status >= 400) {
-        const errorPayload: unknown = response.data as unknown;
-        throw new HttpException(
-          errorPayload ?? { message: 'Upstream service error' },
-          response.status,
+    for (let attempt = 1; attempt <= UPSTREAM_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await firstValueFrom(
+          this.http.request({
+            url,
+            method: request.method,
+            ...(isGetOrHead ? {} : { data: requestBody }),
+            params,
+            headers,
+            timeout: UPSTREAM_TIMEOUT_MS,
+            validateStatus: () => true,
+          }),
         );
-      }
 
-      return response.data as unknown;
-    } catch (err: unknown) {
-      this.logger.warn(
-        {
-          event: 'upstream_error',
-          target: `${targetBaseUrl}${targetPath}`,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        ProxyService.name,
-      );
-      const statusCode =
-        (err as { response?: { status?: number }; status?: number })?.response
-          ?.status ??
-        (err as { status?: number })?.status ??
-        502;
-      const payload = (err as { response?: { data?: unknown } })?.response
-        ?.data ?? {
+        if (response.status >= 500 && attempt < UPSTREAM_MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+          continue;
+        }
+
+        if (response.status >= 400) {
+          const errorPayload: unknown = response.data as unknown;
+          throw new HttpException(
+            errorPayload ?? { message: 'Upstream service error' },
+            response.status,
+          );
+        }
+
+        return response.data as unknown;
+      } catch (err: unknown) {
+        const statusCode =
+          (err as { response?: { status?: number }; status?: number })
+            ?.response?.status ??
+          (err as { status?: number })?.status;
+
+        const retryable =
+          statusCode === undefined ||
+          statusCode >= 500 ||
+          (err as { code?: string })?.code === 'ECONNABORTED';
+
+        lastError = err;
+
+        if (retryable && attempt < UPSTREAM_MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+          continue;
+        }
+
+        break;
+      }
+    }
+
+    this.logger.warn(
+      {
+        event: 'upstream_error',
+        target: `${targetBaseUrl}${targetPath}`,
+        error:
+          lastError instanceof Error ? lastError.message : String(lastError),
+      },
+      ProxyService.name,
+    );
+
+    const statusCode =
+      (lastError as { response?: { status?: number }; status?: number })
+        ?.response?.status ??
+      (lastError as HttpException)?.getStatus?.() ??
+      (lastError as { status?: number })?.status ??
+      502;
+    const payload =
+      (lastError as { response?: { data?: unknown } })?.response?.data ??
+      (lastError as HttpException)?.getResponse?.() ?? {
         message: 'Gateway upstream unavailable',
       };
-      throw new HttpException(payload, statusCode);
-    }
+
+    throw new HttpException(payload, statusCode);
   }
 }

@@ -11,6 +11,8 @@
 ### Shared / DB
 
 - `DATABASE_URL`: connessione PostgreSQL/Supabase.
+- `DATABASE_SSL`: `true` per Supabase.
+- `DATABASE_SSL_REJECT_UNAUTHORIZED`: tipicamente `false` con pooler Supabase locale/dev.
 
 ### Gateway
 

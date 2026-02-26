@@ -39,6 +39,15 @@ export class AuthProxyController {
     return this.proxyService.forward(req, this.authServiceUrl, '/auth/logout');
   }
 
+  @Post('logout-all')
+  logoutAll(@Req() req: Request) {
+    return this.proxyService.forward(
+      req,
+      this.authServiceUrl,
+      '/auth/logout-all',
+    );
+  }
+
   @Get('me')
   me(@Req() req: Request) {
     return this.proxyService.forward(req, this.authServiceUrl, '/auth/me');

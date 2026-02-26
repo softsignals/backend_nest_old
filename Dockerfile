@@ -1,18 +1,31 @@
-FROM node:22-alpine AS base
+# Build stage: build entire monorepo (all three apps)
+FROM node:22-alpine AS builder
+
 WORKDIR /app
-COPY package*.json ./
+
+COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM base AS builder
-COPY . .
-ARG APP_NAME
-RUN npm run build:${APP_NAME}
+COPY tsconfig.json nest-cli.json ./
+COPY apps ./apps
+COPY libs ./libs
+COPY scripts ./scripts
 
-FROM node:22-alpine AS runtime
+RUN npm run build
+
+# Production stage: single image runs any app via NEST_APP
+FROM node:22-alpine AS production
+
 WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=base /app/node_modules ./node_modules
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
 COPY --from=builder /app/dist ./dist
-COPY package*.json ./
-ARG APP_NAME
-CMD ["sh", "-c", "node dist/apps/${NEST_APP}/apps/${NEST_APP}/src/main.js"]
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+EXPOSE 3000 3001 3002
+
+ENTRYPOINT ["/docker-entrypoint.sh"]

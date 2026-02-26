@@ -24,12 +24,23 @@ import { MetricsController } from './metrics.controller';
     TerminusModule,
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres' as const,
-        url: configService.getOrThrow<string>('DATABASE_URL'),
-        entities: [TimbraturaEntity, CommessaEntity, QrCodeRevisionEntity],
-        synchronize: false,
-      }),
+      useFactory: (configService: ConfigService) => {
+        const sslEnabled =
+          configService.get<string>('DATABASE_SSL', 'false') === 'true';
+        const rejectUnauthorized =
+          configService.get<string>(
+            'DATABASE_SSL_REJECT_UNAUTHORIZED',
+            'false',
+          ) === 'true';
+
+        return {
+          type: 'postgres' as const,
+          url: configService.getOrThrow<string>('DATABASE_URL'),
+          ssl: sslEnabled ? { rejectUnauthorized } : false,
+          entities: [TimbraturaEntity, CommessaEntity, QrCodeRevisionEntity],
+          synchronize: false,
+        };
+      },
     }),
     BullModule.forRootAsync({
       inject: [ConfigService],

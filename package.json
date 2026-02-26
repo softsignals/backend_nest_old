@@ -10,7 +10,7 @@
     "build:gateway": "nest build api-gateway-bff",
     "build:auth": "nest build auth-service",
     "build:timbrature": "nest build timbrature-service",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write \"apps/**/*.ts\" \"libs/**/*.ts\" \"scripts/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start api-gateway-bff",
     "start:gateway": "nest start api-gateway-bff",
     "start:auth": "nest start auth-service",
@@ -28,11 +28,12 @@
     "test:watch": "jest --watch --watchman=false",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "test:e2e": "jest --config ./test/jest-e2e.json --watchman=false --runInBand",
     "migration:run": "node -r ts-node/register ./node_modules/typeorm/cli.js migration:run -d apps/auth-service/src/database/data-source.ts",
     "migration:revert": "node -r ts-node/register ./node_modules/typeorm/cli.js migration:revert -d apps/auth-service/src/database/data-source.ts",
     "migration:generate": "node -r ts-node/register ./node_modules/typeorm/cli.js migration:generate apps/auth-service/src/database/migrations/$npm_config_name -d apps/auth-service/src/database/data-source.ts",
-    "db:prepare": "npm run migration:run"
+    "db:prepare": "npm run migration:run",
+    "seed:mvp": "node -r ts-node/register ./scripts/seed-mvp.ts"
   },
   "dependencies": {
     "@nestjs/axios": "^4.0.1",
@@ -104,6 +105,7 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "passWithNoTests": true
   }
 }

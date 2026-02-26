@@ -183,6 +183,13 @@ export class AuthService implements OnModuleInit {
     return { ok: true };
   }
 
+  async logoutAll(userId: string): Promise<void> {
+    await this.sessionsRepository.update(
+      { userId, revokedAt: IsNull() },
+      { revokedAt: new Date() },
+    );
+  }
+
   async me(userId: string) {
     const user = await this.usersRepository.findOne({
       where: { id: userId },

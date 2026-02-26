@@ -4,6 +4,10 @@ info:
   version: 1.0.0
   description: API per la gestione delle timbrature, turni, commesse e utenti
 
+servers:
+  - url: /api/v1
+    description: Gateway BFF
+
 paths:
   /auth/login:
     post:

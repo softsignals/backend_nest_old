@@ -7,7 +7,7 @@ Backend NestJS con percorso production in `apps/`:
 - `timbrature-service` (porta `3002`): timbrature async + commesse + QR history.
 
 Infrastruttura:
-- PostgreSQL (porta `5432`)
+- Supabase PostgreSQL (esterno via `DATABASE_URL`)
 - Redis (porta `6379`)
 
 ## Production Path (Importante)
@@ -27,9 +27,31 @@ npm run migration:run
 npm run migration:revert
 npm run migration:generate --name=<migration_name>
 npm run db:prepare
+npm run seed:mvp
 ```
 
 `TypeORM synchronize` è disattivato (`false`) in auth/timbrature.
+Per Supabase usare SSL con:
+
+```env
+DATABASE_SSL=true
+DATABASE_SSL_REJECT_UNAUTHORIZED=false
+```
+
+## Bootstrap nuovo database Supabase
+
+1. Imposta `DATABASE_URL` Supabase in `.env.auth` e `.env.timbrature`.
+2. Esegui migrazioni:
+
+```bash
+npm run migration:run
+```
+
+3. Esegui seed MVP (1 admin, 1 manager, 1 dipendente, 2 commesse):
+
+```bash
+npm run seed:mvp
+```
 
 ## Avvio locale con Docker
 
@@ -37,7 +59,8 @@ npm run db:prepare
    - `.env.gateway`
    - `.env.auth`
    - `.env.timbrature`
-2. Avvia stack:
+2. Verifica che `.env.auth` e `.env.timbrature` puntino a Supabase (`DATABASE_URL`).
+3. Avvia stack:
 
 ```bash
 docker compose up --build
@@ -84,12 +107,20 @@ Il file `bruno.json` in root definisce lo scenario di load test (`timbrature-bur
 
 Non committare secret o `.env.*` reali. Guida: `docs/secrets.md`.
 
-## CI
+## CI/CD e deploy produzione
 
-Pipeline `.github/workflows/ci.yml`:
+Pipeline **`.github/workflows/deploy.yml`** (su push su `main`):
 
-- `npm ci`
-- `npm run lint`
-- `npm run migration:run`
-- `npm run test`
-- `npm run build`
+- Lavora in `backend_nest/`: `npm ci`, lint, test, migrazioni (Postgres in CI), build
+- SonarQube su `apps` e `libs`
+- Build immagine Docker unica (stesso image per gateway, auth, timbrature; il servizio è scelto da `NEST_APP`)
+- Push su GitHub Container Registry come `ghcr.io/<repo>/backend-nest:latest`
+- Deploy su VPS: in ` /opt/timbrio/backend_nest` viene scritto `docker-compose.prod.yml` e eseguito `docker compose up -d` (redis + auth + timbrature + gateway sulla porta **5000**)
+
+**Sul server** devono esistere in `/opt/timbrio/backend_nest/` i file:
+
+- `.env.gateway` (con `AUTH_SERVICE_URL=http://auth-service:3001`, `TIMBRATURE_SERVICE_URL=http://timbrature-service:3002` e le altre variabili del gateway)
+- `.env.auth` (es. `DATABASE_URL`, `JWT_SECRET`, …)
+- `.env.timbrature` (es. `DATABASE_URL`, `REDIS_HOST=timbrio-redis`, …)
+
+Workflow aggiuntivo **`.github/workflows/ci-backend-nest.yml`**: CI (lint, test, build, migrazioni) su push/PR quando cambia `backend_nest/**`, senza deploy.

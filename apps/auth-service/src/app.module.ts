@@ -21,12 +21,23 @@ import { LoginAttemptEntity } from './auth/entities/login-attempt.entity';
     TerminusModule,
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        type: 'postgres' as const,
-        url: configService.getOrThrow<string>('DATABASE_URL'),
-        entities: [UserEntity, RefreshSessionEntity, LoginAttemptEntity],
-        synchronize: false,
-      }),
+      useFactory: (configService: ConfigService) => {
+        const sslEnabled =
+          configService.get<string>('DATABASE_SSL', 'false') === 'true';
+        const rejectUnauthorized =
+          configService.get<string>(
+            'DATABASE_SSL_REJECT_UNAUTHORIZED',
+            'false',
+          ) === 'true';
+
+        return {
+          type: 'postgres' as const,
+          url: configService.getOrThrow<string>('DATABASE_URL'),
+          ssl: sslEnabled ? { rejectUnauthorized } : false,
+          entities: [UserEntity, RefreshSessionEntity, LoginAttemptEntity],
+          synchronize: false,
+        };
+      },
     }),
     AuthModule,
   ],

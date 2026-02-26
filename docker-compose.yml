@@ -1,21 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: ss_postgres
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: softsignals
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U postgres -d softsignals']
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   redis:
     image: redis:7-alpine
     container_name: ss_redis
@@ -30,30 +13,21 @@ services:
   auth-service:
     build:
       context: .
-      args:
-        APP_NAME: auth
     env_file:
       - .env.auth
     environment:
       NEST_APP: auth-service
-    depends_on:
-      postgres:
-        condition: service_healthy
     ports:
       - '3001:3001'
 
   timbrature-service:
     build:
       context: .
-      args:
-        APP_NAME: timbrature
     env_file:
       - .env.timbrature
     environment:
       NEST_APP: timbrature-service
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     ports:
@@ -62,8 +36,6 @@ services:
   api-gateway-bff:
     build:
       context: .
-      args:
-        APP_NAME: gateway
     env_file:
       - .env.gateway
     environment:
@@ -75,6 +47,3 @@ services:
         condition: service_started
     ports:
       - '3000:3000'
-
-volumes:
-  postgres_data:
