@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: softsignals
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d softsignals"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/softsignals
+      JWT_SECRET: ci_secret_value
+      JWT_ACCESS_TTL_SECONDS: 900
+      JWT_REFRESH_TTL_DAYS: 7
+      AUTH_ADMIN_EMAIL: admin@example.com
+      AUTH_ADMIN_PASSWORD: ChangeMe123!
+      AUTH_SERVICE_URL: http://localhost:3001
+      TIMBRATURE_SERVICE_URL: http://localhost:3002
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      GATEWAY_CORS_ORIGINS: http://localhost:19006
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Run migrations
+        run: npm run migration:run
+
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build microservices
+        run: npm run build

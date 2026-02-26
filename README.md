@@ -1,162 +1,90 @@
-## @
+# SoftSignals Backend Microservices
 
-### Building
+Backend NestJS con percorso production in `apps/`:
 
-To install the required dependencies and to build the typescript sources run:
+- `api-gateway-bff` (porta `3000`): unico entrypoint pubblico (`/api/v1/*`).
+- `auth-service` (porta `3001`): autenticazione JWT + refresh sessions.
+- `timbrature-service` (porta `3002`): timbrature async + commesse + QR history.
+
+Infrastruttura:
+- PostgreSQL (porta `5432`)
+- Redis (porta `6379`)
+
+## Production Path (Importante)
+
+- Il percorso runtime/CI supportato è **solo `apps/`**.
+- `src/` è legacy e non deve essere usato per deploy o test CI.
+- Dettagli: `docs/legacy-src.md`.
+
+## Schema DB e Migrazioni
+
+Lo schema è gestito da TypeORM migrations (baseline allineata a `docs/supabase-schema.sql`).
+
+Comandi:
+
+```bash
+npm run migration:run
+npm run migration:revert
+npm run migration:generate --name=<migration_name>
+npm run db:prepare
 ```
+
+`TypeORM synchronize` è disattivato (`false`) in auth/timbrature.
+
+## Avvio locale con Docker
+
+1. Prepara file env locali da `.env.example`:
+   - `.env.gateway`
+   - `.env.auth`
+   - `.env.timbrature`
+2. Avvia stack:
+
+```bash
+docker compose up --build
+```
+
+3. Endpoint health:
+   - Gateway live: `http://localhost:3000/api/v1/health/live`
+   - Gateway ready: `http://localhost:3000/api/v1/health/ready`
+   - Auth ready: `http://localhost:3001/health/ready`
+   - Timbrature ready: `http://localhost:3002/health/ready`
+
+## Avvio locale senza Docker
+
+```bash
 npm install
-npm run build
+npm run start:dev:auth
+npm run start:dev:timbrature
+npm run start:dev:gateway
 ```
 
-#### General usage
+## Endpoint principali via gateway
 
-In your Nestjs project:
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/auth/me`
+- `GET /api/v1/auth/permissions`
+- `POST /api/v1/timbrature` (202 Accepted + `jobId`)
+- `GET /api/v1/timbrature/jobs/:jobId`
+- `GET /api/v1/timbrature`
+- `POST /api/v1/commesse`
+- `GET /api/v1/commesse`
+- `GET /api/v1/commesse/:id`
+- `PATCH /api/v1/commesse/:id`
+- `POST /api/v1/commesse/:id/qr/regenerate`
+- `GET /api/v1/commesse/:id/qr/history`
 
+## Secrets
 
-```
-// without configuring providers
-import { ApiModule } from '';
-import { HttpModule } from '@nestjs/axios';
+Non committare secret o `.env.*` reali. Guida: `docs/secrets.md`.
 
-@Module({
-    imports: [
-        ApiModule,
-        HttpModule
-    ],
-    providers: []
-})
-export class AppModule {}
-```
+## CI
 
-```
-// configuring providers
-import { ApiModule, Configuration, ConfigurationParameters } from '';
+Pipeline `.github/workflows/ci.yml`:
 
-export function apiConfigFactory (): Configuration => {
-  const params: ConfigurationParameters = {
-    // set configuration parameters here.
-  }
-  return new Configuration(params);
-}
-
-@Module({
-    imports: [ ApiModule.forRoot(apiConfigFactory) ],
-    declarations: [ AppComponent ],
-    providers: [],
-    bootstrap: [ AppComponent ]
-})
-export class AppModule {}
-```
-
-```
-import { DefaultApi } from '';
-
-export class AppComponent {
-    constructor(private apiGateway: DefaultApi) { }
-}
-```
-
-Note: The ApiModule a dynamic module and instantiated once app wide.
-This is to ensure that all services are treated as singletons.
-
-#### Using multiple swagger files / APIs / ApiModules
-In order to use multiple `ApiModules` generated from different swagger files,
-you can create an alias name when importing the modules
-in order to avoid naming conflicts:
-```
-import { ApiModule } from 'my-api-path';
-import { ApiModule as OtherApiModule } from 'my-other-api-path';
-import { HttpModule } from '@nestjs/axios';
-
-@Module({
-  imports: [
-    ApiModule,
-    OtherApiModule,
-    HttpModule
-  ]
-})
-export class AppModule {
-
-}
-```
-
-
-### Set service base path
-If different than the generated base path, during app bootstrap, you can provide the base path to your service.
-
-```
-import { BASE_PATH } from '';
-
-bootstrap(AppComponent, [
-    { provide: BASE_PATH, useValue: 'https://your-web-service.com' },
-]);
-```
-or
-
-```
-import { BASE_PATH } from '';
-
-@Module({
-    imports: [],
-    declarations: [ AppComponent ],
-    providers: [ provide: BASE_PATH, useValue: 'https://your-web-service.com' ],
-    bootstrap: [ AppComponent ]
-})
-export class AppModule {}
-```
-
-### Configuring the module with `forRootAsync`
-
-You can also use the Nestjs Config Module/Service to configure your app with `forRootAsync`.
-
-```
-@Module({
-    imports: [
-      ApiModule.forRootAsync({
-        imports: [ConfigModule],
-        inject: [ConfigService],
-        useFactory: (config: ConfigService): Configuration => {
-          const params: ConfigurationParameters = {
-            // set configuration parameters here.
-            basePath: config.get('API_URL'),
-          };
-          return new Configuration(params);
-        },
-      })
-    ],
-    declarations: [ AppComponent ],
-    providers: [],
-    bootstrap: [ AppComponent ]
-})
-export class AppModule {}
-```
-
-#### Using @nestjs/cli
-First extend your `src/environments/*.ts` files by adding the corresponding base path:
-
-```
-export const environment = {
-  production: false,
-  API_BASE_PATH: 'http://127.0.0.1:8080'
-};
-```
-
-In the src/app/app.module.ts:
-```
-import { BASE_PATH } from '';
-import { environment } from '../environments/environment';
-
-@Module({
-  declarations: [
-    AppComponent
-  ],
-  imports: [ ],
-  providers: [
-    {
-      provide: 'BASE_PATH',
-      useValue: environment.API_BASE_PATH
-    }
-  ]
-})
-export class AppModule { }
-```
+- `npm ci`
+- `npm run lint`
+- `npm run migration:run`
+- `npm run test`
+- `npm run build`
